@@ -1,0 +1,127 @@
+// CRM database for the LegalShield outreach system.
+// Plain-English guide: each "model" below is one table (one drawer in the filing cabinet).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+/// Business membership (the owner buys for their company) vs. Group (offered to employees/members).
+enum OpportunityType {
+  BUSINESS
+  GROUP
+  UNKNOWN
+}
+
+/// Pipeline stages, in order. Mirrors the spec: Prospect → … → Enrolled.
+enum Stage {
+  PROSPECT
+  CONTACTED
+  REPLIED
+  QUALIFIED
+  MEETING_BOOKED
+  PRESENTED
+  ENROLLMENT_LINK_SENT
+  ENROLLED
+  LOST
+  FOLLOW_UP_LATER
+}
+
+enum ActivityType {
+  EMAIL_SENT
+  EMAIL_RECEIVED
+  CALL
+  LINKEDIN
+  CONTACT_FORM
+  MEETING
+  NOTE
+  STAGE_CHANGE
+}
+
+/// Reply / call outcome classification (spec: RESPONSE CLASSIFICATION).
+enum Outcome {
+  INTERESTED
+  NEEDS_INFORMATION
+  NOT_NOW
+  NOT_INTERESTED
+  WRONG_PERSON
+  REFERRAL
+  BOOK_MEETING
+  REMOVE_OPT_OUT
+  UNKNOWN
+  NO_ANSWER
+  LEFT_VOICEMAIL
+  GATEKEEPER_ONLY
+}
+
+model Prospect {
+  id                 String          @id @default(cuid())
+  company            String
+  website            String?
+  contactName        String?
+  title              String?
+  email              String?
+  phone              String?         // only if legitimately available (published business line, given to us, etc.)
+  linkedin           String?
+  city               String?
+  state              String?
+  industry           String?
+  employeeEstimate   Int?
+  employeeIsEstimate Boolean         @default(true) // spec: mark estimates clearly as estimates
+  type               OpportunityType @default(UNKNOWN)
+  qualificationScore Int?            // 0–100, filled in by Milestone 2 scoring
+  whyContacted       String?         // the observable reason — never manufactured pain
+  source             String?         // where we found them (Google Maps, chamber directory, referral…)
+  stage              Stage           @default(PROSPECT)
+  firstContactAt     DateTime?
+  lastContactAt      DateTime?
+  nextFollowUpAt     DateTime?
+  notes              String?
+
+  // --- Phone / gatekeeper play ---
+  gatekeeperName       String?
+  benefitsContactName  String?
+  benefitsContactTitle String?
+  bestTimeToCall       String?
+  rapportNotes         String?  // personal details to bring up next call ("daughter plays travel softball")
+
+  optedOut  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  activities Activity[]
+
+  @@index([stage])
+  @@index([nextFollowUpAt])
+  @@index([email])
+}
+
+/// Every touch: email, call, LinkedIn message, note, stage change. This IS the conversation history.
+model Activity {
+  id         String       @id @default(cuid())
+  prospectId String
+  prospect   Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  type       ActivityType
+  outcome    Outcome?
+  summary    String
+  body       String?
+  occurredAt DateTime     @default(now())
+  createdAt  DateTime     @default(now())
+
+  @@index([prospectId, occurredAt])
+  @@index([type, occurredAt])
+}
+
+/// Do-not-contact list. Checked before ANY automated outreach (CAN-SPAM / TCPA).
+model Suppression {
+  id        String   @id @default(cuid())
+  value     String   @unique // lower-cased email, phone digits, or @domain
+  kind      String   // "email" | "phone" | "domain"
+  reason    String?
+  createdAt DateTime @default(now())
+}
